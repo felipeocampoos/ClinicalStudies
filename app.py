@@ -1,5 +1,6 @@
 import io
 import unicodedata
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Estudios clínicos Colombia", layout="wide")
 
-# Ruta del archivo base dentro del repositorio
+# Ajusta este nombre si renombras el archivo en GitHub
 DATA_PATH = "ctg-studies (3).csv"
 
 
@@ -15,6 +16,12 @@ def normalizar_texto(texto):
     texto = str(texto)
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("utf-8")
     return texto.lower().strip()
+
+
+def normalizar_nombre_archivo(texto):
+    texto = normalizar_texto(texto)
+    texto = texto.replace(" ", "_")
+    return texto
 
 
 @st.cache_data
@@ -41,6 +48,13 @@ def dataframe_a_excel_bytes(df):
     return output.getvalue()
 
 
+def figura_a_png_bytes(fig):
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=300, bbox_inches="tight")
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def grafica_conteos(df_colombia, df_valle, df_lili):
     categorias = ["Colombia", "Valle del Cauca", "Fundación Valle del Lili"]
     valores = [len(df_colombia), len(df_valle), len(df_lili)]
@@ -49,7 +63,7 @@ def grafica_conteos(df_colombia, df_valle, df_lili):
     colores = plt.cm.Pastel1(np.linspace(0, 1, len(valores)))
     bars = ax.bar(categorias, valores, color=colores)
 
-    max_valor = max(valores)
+    max_valor = max(valores) if len(valores) > 0 else 1
 
     for bar, valor in zip(bars, valores):
         ax.text(
@@ -65,6 +79,7 @@ def grafica_conteos(df_colombia, df_valle, df_lili):
     ax.set_ylabel("Cantidad de estudios")
     ax.set_ylim(0, max_valor * 1.18)
 
+    fig.tight_layout()
     return fig
 
 
@@ -101,6 +116,7 @@ def grafica_barras_status(df_filtrado, titulo):
     ax.set_ylabel("Study Status")
     ax.set_xlim(0, max_valor * 1.25)
 
+    fig.tight_layout()
     return fig
 
 
@@ -116,10 +132,11 @@ def tabla_status(df_filtrado):
     return tabla
 
 
-def render_seccion(nombre_seccion, df_seccion, nombre_archivo, df_colombia, df_valle, df_lili):
+def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia, df_valle, df_lili):
     st.header(nombre_seccion)
-
     st.metric("Número de estudios", len(df_seccion))
+
+    nombre_base = normalizar_nombre_archivo(nombre_seccion)
 
     col1, col2 = st.columns(2)
 
@@ -128,18 +145,36 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo, df_colombia, df_v
         fig1 = grafica_conteos(df_colombia, df_valle, df_lili)
         st.pyplot(fig1)
 
+        png_conteo = figura_a_png_bytes(fig1)
+        st.download_button(
+            label="Descargar imagen de conteo general",
+            data=png_conteo,
+            file_name=f"grafica_conteo_general_{nombre_base}.png",
+            mime="image/png",
+        )
+        plt.close(fig1)
+
     with col2:
         st.subheader("Distribución de Study Status")
         fig2 = grafica_barras_status(df_seccion, f"Distribución de Study Status - {nombre_seccion}")
         st.pyplot(fig2)
 
+        png_status = figura_a_png_bytes(fig2)
+        st.download_button(
+            label="Descargar imagen de Study Status",
+            data=png_status,
+            file_name=f"grafica_study_status_{nombre_base}.png",
+            mime="image/png",
+        )
+        plt.close(fig2)
+
     st.subheader("Descargar archivo")
     excel_bytes = dataframe_a_excel_bytes(df_seccion)
 
     st.download_button(
-        label=f"Descargar {nombre_archivo}",
+        label=f"Descargar {nombre_archivo_excel}",
         data=excel_bytes,
-        file_name=nombre_archivo,
+        file_name=nombre_archivo_excel,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -152,7 +187,7 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo, df_colombia, df_v
 
 def main():
     st.title("Estudios clínicos aprobados en Colombia")
-    st.write("Selecciona una sección para ver las gráficas y descargar el archivo en Excel.")
+    st.write("Selecciona una sección para ver las gráficas y descargar el archivo en Excel o las imágenes en PNG.")
 
     df_colombia, df_valle, df_lili = cargar_y_preparar_datos()
 
