@@ -10,7 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="Estudios clínicos Colombia", layout="wide")
 
 # Ruta del archivo base dentro del repositorio
-DATA_PATH = "data/ctg-studies.csv"
+DATA_PATH = "ctg-studies (3).csv"
 
 
 def normalizar_texto(texto):
