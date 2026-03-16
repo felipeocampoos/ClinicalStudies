@@ -1,5 +1,6 @@
 import io
 import unicodedata
+from datetime import date
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Ajusta este nombre si renombras el archivo en GitHub
-DATA_PATH = "ctg-studies (3).csv"
+DATA_PATH = "ctg-studies.csv"
 
 
 def normalizar_texto(texto):
@@ -38,17 +39,41 @@ def normalizar_nombre_archivo(texto):
 
 
 @st.cache_data
-def cargar_y_preparar_datos():
+def cargar_datos():
     df = pd.read_csv(DATA_PATH)
 
-    locations_norm = df["Locations"].fillna("").apply(normalizar_texto)
+    # Parsear Start Date
+    df["Start Date Parsed"] = pd.to_datetime(df["Start Date"], errors="coerce")
 
-    mask_valle = locations_norm.str.contains("valle del cauca", regex=False)
-    mask_lili = locations_norm.str.contains("fundacion valle del lili", regex=False)
+    # Normalizar Locations
+    df["Locations_norm"] = df["Locations"].fillna("").apply(normalizar_texto)
 
-    df_colombia = df.copy()
-    df_valle = df[mask_valle].copy()
-    df_lili = df[mask_lili].copy()
+    return df
+
+
+def filtrar_datos(df, fecha_inicio, fecha_fin):
+    # Filtro por fecha
+    mask_fecha = (
+        df["Start Date Parsed"].notna()
+        & (df["Start Date Parsed"].dt.date >= fecha_inicio)
+        & (df["Start Date Parsed"].dt.date <= fecha_fin)
+    )
+
+    df_filtrado = df[mask_fecha].copy()
+
+    # Filtros por ubicación
+    mask_valle = df_filtrado["Locations_norm"].str.contains("valle del cauca", regex=False)
+    mask_lili = df_filtrado["Locations_norm"].str.contains("fundacion valle del lili", regex=False)
+
+    df_colombia = df_filtrado.copy()
+    df_valle = df_filtrado[mask_valle].copy()
+    df_lili = df_filtrado[mask_lili].copy()
+
+    # Quitar columnas auxiliares de visualización/descarga
+    columnas_aux = ["Start Date Parsed", "Locations_norm"]
+    df_colombia = df_colombia.drop(columns=columnas_aux, errors="ignore")
+    df_valle = df_valle.drop(columns=columnas_aux, errors="ignore")
+    df_lili = df_lili.drop(columns=columnas_aux, errors="ignore")
 
     return df_colombia, df_valle, df_lili
 
@@ -104,16 +129,24 @@ def grafica_barras_status(df_filtrado, titulo):
         .sort_values(ascending=True)
     )
 
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if len(serie_status) == 0:
+        ax.text(0.5, 0.5, "No hay datos para el rango seleccionado", ha="center", va="center", fontsize=12)
+        ax.set_title(titulo)
+        ax.axis("off")
+        fig.tight_layout()
+        return fig
+
     etiquetas = serie_status.index.str.replace("_", " ", regex=False)
     valores = serie_status.values
     total = valores.sum()
-    porcentajes = (valores / total) * 100 if total > 0 else np.zeros_like(valores, dtype=float)
+    porcentajes = (valores / total) * 100
 
-    fig, ax = plt.subplots(figsize=(12, 6))
     colores = plt.cm.Pastel1(np.linspace(0, 1, len(valores)))
     ax.barh(etiquetas, valores, color=colores)
 
-    max_valor = max(valores) if len(valores) > 0 else 1
+    max_valor = max(valores)
 
     for i, (valor, pct) in enumerate(zip(valores, porcentajes)):
         ax.text(
@@ -140,6 +173,10 @@ def tabla_status(df_filtrado):
         .value_counts()
         .reset_index()
     )
+
+    if tabla.empty:
+        return pd.DataFrame(columns=["Study Status", "Número de estudios", "Porcentaje"])
+
     tabla.columns = ["Study Status", "Número de estudios"]
     tabla["Porcentaje"] = (
         tabla["Número de estudios"] / tabla["Número de estudios"].sum() * 100
@@ -147,8 +184,9 @@ def tabla_status(df_filtrado):
     return tabla
 
 
-def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia, df_valle, df_lili):
+def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia, df_valle, df_lili, fecha_inicio, fecha_fin):
     st.header(nombre_seccion)
+    st.caption(f"Rango de fechas aplicado: {fecha_inicio} a {fecha_fin}")
     st.metric("Número de estudios", len(df_seccion))
 
     nombre_base = normalizar_nombre_archivo(nombre_seccion)
@@ -164,7 +202,7 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia
         st.download_button(
             label="Descargar imagen de conteo general",
             data=png_conteo,
-            file_name=f"grafica_conteo_general_{nombre_base}.png",
+            file_name=f"grafica_conteo_general_{nombre_base}_{fecha_inicio}_{fecha_fin}.png",
             mime="image/png",
         )
         plt.close(fig1)
@@ -178,7 +216,7 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia
         st.download_button(
             label="Descargar imagen de Study Status",
             data=png_status,
-            file_name=f"grafica_study_status_{nombre_base}.png",
+            file_name=f"grafica_study_status_{nombre_base}_{fecha_inicio}_{fecha_fin}.png",
             mime="image/png",
         )
         plt.close(fig2)
@@ -202,43 +240,80 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia
 
 def main():
     st.title("Estudios clínicos aprobados en Colombia")
-    st.write("Selecciona una sección para ver las gráficas y descargar el archivo en Excel o las imágenes en PNG.")
+    st.write("Selecciona una sección y un rango de fechas para ver las gráficas y descargar el archivo en Excel o las imágenes en PNG.")
 
-    df_colombia, df_valle, df_lili = cargar_y_preparar_datos()
+    df = cargar_datos()
+
+    fechas_validas = df["Start Date Parsed"].dropna()
+
+    if fechas_validas.empty:
+        st.error("La columna 'Start Date' no tiene fechas válidas.")
+        return
+
+    fecha_min = fechas_validas.min().date()
+    fecha_max = fechas_validas.max().date()
+
+    st.sidebar.header("Filtros")
 
     seccion = st.sidebar.radio(
         "Sección",
         ["Colombia", "Valle del Cauca", "Fundación Valle del Lili"]
     )
 
+    fecha_inicio = st.sidebar.date_input(
+        "Fecha de inicio",
+        value=fecha_min,
+        min_value=fecha_min,
+        max_value=fecha_max
+    )
+
+    fecha_fin = st.sidebar.date_input(
+        "Fecha de fin",
+        value=fecha_max,
+        min_value=fecha_min,
+        max_value=fecha_max
+    )
+
+    if fecha_inicio > fecha_fin:
+        st.error("La fecha de inicio no puede ser mayor que la fecha de fin.")
+        return
+
+    df_colombia, df_valle, df_lili = filtrar_datos(df, fecha_inicio, fecha_fin)
+
     if seccion == "Colombia":
         render_seccion(
             "Colombia",
             df_colombia,
-            "estudios_colombia.xlsx",
+            f"estudios_colombia_{fecha_inicio}_{fecha_fin}.xlsx",
             df_colombia,
             df_valle,
-            df_lili
+            df_lili,
+            fecha_inicio,
+            fecha_fin
         )
 
     elif seccion == "Valle del Cauca":
         render_seccion(
             "Valle del Cauca",
             df_valle,
-            "estudios_valle_del_cauca.xlsx",
+            f"estudios_valle_del_cauca_{fecha_inicio}_{fecha_fin}.xlsx",
             df_colombia,
             df_valle,
-            df_lili
+            df_lili,
+            fecha_inicio,
+            fecha_fin
         )
 
     elif seccion == "Fundación Valle del Lili":
         render_seccion(
             "Fundación Valle del Lili",
             df_lili,
-            "estudios_fundacion_valle_del_lili.xlsx",
+            f"estudios_fundacion_valle_del_lili_{fecha_inicio}_{fecha_fin}.xlsx",
             df_colombia,
             df_valle,
-            df_lili
+            df_lili,
+            fecha_inicio,
+            fecha_fin
         )
 
 
