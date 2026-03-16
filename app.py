@@ -6,7 +6,20 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Estudios clínicos Colombia", layout="wide")
+st.set_page_config(
+    page_title="Estudios clínicos Colombia",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Oculta el botón para colapsar la barra lateral
+st.markdown("""
+<style>
+    [data-testid="collapsedControl"] {
+        display: none;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Ajusta este nombre si renombras el archivo en GitHub
 DATA_PATH = "ctg-studies (3).csv"
@@ -128,7 +141,9 @@ def tabla_status(df_filtrado):
         .reset_index()
     )
     tabla.columns = ["Study Status", "Número de estudios"]
-    tabla["Porcentaje"] = (tabla["Número de estudios"] / tabla["Número de estudios"].sum() * 100).round(1)
+    tabla["Porcentaje"] = (
+        tabla["Número de estudios"] / tabla["Número de estudios"].sum() * 100
+    ).round(1)
     return tabla
 
 
