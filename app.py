@@ -1,6 +1,5 @@
 import io
 import unicodedata
-from datetime import date
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Ajusta este nombre si renombras el archivo en GitHub
-DATA_PATH = "ctg-studies.csv"
+DATA_PATH = "ctg-studies (3).csv"
 
 
 def normalizar_texto(texto):
@@ -36,6 +35,10 @@ def normalizar_nombre_archivo(texto):
     texto = normalizar_texto(texto)
     texto = texto.replace(" ", "_")
     return texto
+
+
+def limpiar_etiqueta_status(texto):
+    return str(texto).replace("_", " ")
 
 
 @st.cache_data
@@ -51,8 +54,8 @@ def cargar_datos():
     return df
 
 
-def filtrar_datos(df, fecha_inicio, fecha_fin):
-    # Filtro por fecha
+def filtrar_datos(df, fecha_inicio, fecha_fin, estados_seleccionados):
+    # 1. Filtro por fecha
     mask_fecha = (
         df["Start Date Parsed"].notna()
         & (df["Start Date Parsed"].dt.date >= fecha_inicio)
@@ -61,7 +64,15 @@ def filtrar_datos(df, fecha_inicio, fecha_fin):
 
     df_filtrado = df[mask_fecha].copy()
 
-    # Filtros por ubicación
+    # 2. Filtro por estados
+    if estados_seleccionados:
+        df_filtrado = df_filtrado[
+            df_filtrado["Study Status"].fillna("Sin dato").isin(estados_seleccionados)
+        ].copy()
+    else:
+        df_filtrado = df_filtrado.iloc[0:0].copy()
+
+    # 3. Filtros por ubicación
     mask_valle = df_filtrado["Locations_norm"].str.contains("valle del cauca", regex=False)
     mask_lili = df_filtrado["Locations_norm"].str.contains("fundacion valle del lili", regex=False)
 
@@ -69,7 +80,7 @@ def filtrar_datos(df, fecha_inicio, fecha_fin):
     df_valle = df_filtrado[mask_valle].copy()
     df_lili = df_filtrado[mask_lili].copy()
 
-    # Quitar columnas auxiliares de visualización/descarga
+    # Quitar columnas auxiliares antes de mostrar/descargar
     columnas_aux = ["Start Date Parsed", "Locations_norm"]
     df_colombia = df_colombia.drop(columns=columnas_aux, errors="ignore")
     df_valle = df_valle.drop(columns=columnas_aux, errors="ignore")
@@ -132,13 +143,17 @@ def grafica_barras_status(df_filtrado, titulo):
     fig, ax = plt.subplots(figsize=(12, 6))
 
     if len(serie_status) == 0:
-        ax.text(0.5, 0.5, "No hay datos para el rango seleccionado", ha="center", va="center", fontsize=12)
+        ax.text(
+            0.5, 0.5,
+            "No hay datos para los filtros seleccionados",
+            ha="center", va="center", fontsize=12
+        )
         ax.set_title(titulo)
         ax.axis("off")
         fig.tight_layout()
         return fig
 
-    etiquetas = serie_status.index.str.replace("_", " ", regex=False)
+    etiquetas = [limpiar_etiqueta_status(x) for x in serie_status.index]
     valores = serie_status.values
     total = valores.sum()
     porcentajes = (valores / total) * 100
@@ -178,15 +193,40 @@ def tabla_status(df_filtrado):
         return pd.DataFrame(columns=["Study Status", "Número de estudios", "Porcentaje"])
 
     tabla.columns = ["Study Status", "Número de estudios"]
+    tabla["Study Status"] = tabla["Study Status"].apply(limpiar_etiqueta_status)
     tabla["Porcentaje"] = (
         tabla["Número de estudios"] / tabla["Número de estudios"].sum() * 100
     ).round(1)
+
     return tabla
 
 
-def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia, df_valle, df_lili, fecha_inicio, fecha_fin):
+def resumen_filtros_texto(fecha_inicio, fecha_fin, estados_seleccionados):
+    if not estados_seleccionados:
+        texto_estados = "Ninguno"
+    elif len(estados_seleccionados) == 1:
+        texto_estados = limpiar_etiqueta_status(estados_seleccionados[0])
+    elif len(estados_seleccionados) <= 4:
+        texto_estados = ", ".join([limpiar_etiqueta_status(x) for x in estados_seleccionados])
+    else:
+        texto_estados = f"{len(estados_seleccionados)} estados seleccionados"
+
+    return f"Rango de fechas: {fecha_inicio} a {fecha_fin} | Estados: {texto_estados}"
+
+
+def render_seccion(
+    nombre_seccion,
+    df_seccion,
+    nombre_archivo_excel,
+    df_colombia,
+    df_valle,
+    df_lili,
+    fecha_inicio,
+    fecha_fin,
+    estados_seleccionados
+):
     st.header(nombre_seccion)
-    st.caption(f"Rango de fechas aplicado: {fecha_inicio} a {fecha_fin}")
+    st.caption(resumen_filtros_texto(fecha_inicio, fecha_fin, estados_seleccionados))
     st.metric("Número de estudios", len(df_seccion))
 
     nombre_base = normalizar_nombre_archivo(nombre_seccion)
@@ -209,7 +249,10 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia
 
     with col2:
         st.subheader("Distribución de Study Status")
-        fig2 = grafica_barras_status(df_seccion, f"Distribución de Study Status - {nombre_seccion}")
+        fig2 = grafica_barras_status(
+            df_seccion,
+            f"Distribución de Study Status - {nombre_seccion}"
+        )
         st.pyplot(fig2)
 
         png_status = figura_a_png_bytes(fig2)
@@ -240,7 +283,10 @@ def render_seccion(nombre_seccion, df_seccion, nombre_archivo_excel, df_colombia
 
 def main():
     st.title("Estudios clínicos aprobados en Colombia")
-    st.write("Selecciona una sección y un rango de fechas para ver las gráficas y descargar el archivo en Excel o las imágenes en PNG.")
+    st.write(
+        "Selecciona una sección, un rango de fechas y uno o varios estados "
+        "para actualizar las gráficas y descargar los archivos filtrados."
+    )
 
     df = cargar_datos()
 
@@ -252,6 +298,8 @@ def main():
 
     fecha_min = fechas_validas.min().date()
     fecha_max = fechas_validas.max().date()
+
+    estados_disponibles = sorted(df["Study Status"].fillna("Sin dato").unique().tolist())
 
     st.sidebar.header("Filtros")
 
@@ -274,11 +322,23 @@ def main():
         max_value=fecha_max
     )
 
+    estados_seleccionados = st.sidebar.multiselect(
+        "Study Status",
+        options=estados_disponibles,
+        default=estados_disponibles,
+        format_func=limpiar_etiqueta_status
+    )
+
     if fecha_inicio > fecha_fin:
         st.error("La fecha de inicio no puede ser mayor que la fecha de fin.")
         return
 
-    df_colombia, df_valle, df_lili = filtrar_datos(df, fecha_inicio, fecha_fin)
+    df_colombia, df_valle, df_lili = filtrar_datos(
+        df,
+        fecha_inicio,
+        fecha_fin,
+        estados_seleccionados
+    )
 
     if seccion == "Colombia":
         render_seccion(
@@ -289,7 +349,8 @@ def main():
             df_valle,
             df_lili,
             fecha_inicio,
-            fecha_fin
+            fecha_fin,
+            estados_seleccionados
         )
 
     elif seccion == "Valle del Cauca":
@@ -301,7 +362,8 @@ def main():
             df_valle,
             df_lili,
             fecha_inicio,
-            fecha_fin
+            fecha_fin,
+            estados_seleccionados
         )
 
     elif seccion == "Fundación Valle del Lili":
@@ -313,10 +375,10 @@ def main():
             df_valle,
             df_lili,
             fecha_inicio,
-            fecha_fin
+            fecha_fin,
+            estados_seleccionados
         )
 
 
 if __name__ == "__main__":
     main()
-
