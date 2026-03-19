@@ -22,7 +22,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Ajusta este nombre si renombras el archivo en GitHub
-DATA_PATH = "ctg-studies (3).csv"
+DATA_PATH = "ctg-studies.csv"
 
 
 def normalizar_texto(texto):
